@@ -354,9 +354,8 @@ int main(int argc, char **argv)
 
 	init_buffer(&draw_buffer, &format);
 
-
 #define NVERTS 8
-	vertex_3d_t cube_verts[NVERTS] = {
+	vertex_3d_t ball_verts[NVERTS] = {
 	  {-0.3,-0.3,-0.3},
 	  { 0.3,-0.3,-0.3},
 	  { 0.3, 0.3,-0.3},
@@ -366,10 +365,10 @@ int main(int argc, char **argv)
 	  { 0.3, 0.3, 0.3},
 	  {-0.3, 0.3, 0.3},
 	};
-	vertex_3d_t rotated_cube_verts[NVERTS];
+	vertex_3d_t rotated_ball_verts[NVERTS];
 
 
-	connection_t cube_lines[] = {
+	connection_t ball_lines[] = {
 	  {0,1},
 	  {1,2},
 	  {2,3},
@@ -390,11 +389,10 @@ int main(int argc, char **argv)
 	  {6,7},
 	  {7,3},
 	  {3,0},
-	  
 
 	};
 
-	vertex_t projected_verts[NVERTS] = {
+	vertex_t projected_ball_verts[NVERTS] = {
 	  {1,0},
 	  {0,0},
 	  {0,0},
@@ -407,14 +405,31 @@ int main(int argc, char **argv)
 	};
 
 	while(1) {
+            int rv;
+            struct pollfd fds[2];
+            fds[0].fd = io.fds[0];
+            fds[0].revents = 0;
+            fds[0].events = POLLIN;
+            fds[1].fd = io.fds[1];
+            fds[1].revents = 0;
+            fds[1].events = POLLIN;
+            rv = poll(fds, 2, 0 );
+            if (fds[0].revents) { 
+                poll_hid(io.fds[0]);
+            }
+
+            if (fds[1].revents) { 
+                poll_hid(io.fds[1]);
+            }
+                
+
 	  memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
 
-	  rotate(cube_verts, rotated_cube_verts, NVERTS);	 
-	  project(rotated_cube_verts, projected_verts, NVERTS);
-
+	  rotate(ball_verts, rotated_ball_verts, NVERTS);	 
+	  project(rotated_ball_verts, projected_ball_verts, NVERTS);
 	    
 	  draw_vertex_list(&draw_buffer, &format,
-			   projected_verts, cube_lines, sizeof(cube_lines) / sizeof(connection_t));
+			   projected_ball_verts, ball_lines, sizeof(ball_lines) / sizeof(connection_t));
 	
 	  ao_play(device, draw_buffer.buffer, draw_buffer.buf_size);
 	}
