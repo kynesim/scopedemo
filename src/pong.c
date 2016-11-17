@@ -2,13 +2,37 @@
 #include <string.h>
 #include <ao/ao.h>
 #include <math.h>
+#include <stdint.h>
+#include <sys/fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <sys/poll.h>
 
 #define BUF_SIZE 4096
+
+typedef struct io_s {
+    int fds[2];
+} io_t;
+
 
 typedef struct vertex_s {
   float x;
   float y;
 } vertex_t;
+
+typedef struct vertex_3d_s {
+  float x;
+  float y;
+  float z;
+} vertex_3d_t;
+
+
+/* Lines are drawn by connecting verticies, connect vertext with index a to one with index b*/
+typedef struct connection_s {
+  int a;
+  int b;
+} connection_t;
 
 typedef struct draw_buffer_s {
   char * buffer;
@@ -24,6 +48,99 @@ typedef struct draw_buffer_s {
 #define MAX_Y  16000.0
 
 
+static void dump(const uint8_t *b, int n) {
+    int i;
+    for (i =0;i < n; ++i) {
+        if (!(i%16)) { printf("\n%04x: ", i); }
+        printf("%02x ", b[i]);
+    }
+    printf("\n");
+}
+
+/** @return 0 for no event, -1 for down, +1 for up
+ */
+static int poll_hid( int fd ) { 
+    char buf[256];
+    int rv;
+    int outval = 0;
+    if (fd < 0) { return 0; }
+
+    rv = read( fd, buf, 256);
+    if (rv < 0) {
+        if (errno == EINTR || errno == EAGAIN) {
+            return 0;
+        } else {
+            printf("Cannot read from hidraw : %s [%d] \n",
+                   strerror(errno), errno);
+            exit(1);
+        }
+    } else {
+        if (rv >= 8) { 
+            int key = buf[2];
+            switch (key) { 
+            case 0x60:
+                /* 8 -> move up */
+                outval = 1;
+                break;
+            case 0x5a:
+                /* 2 -> move down */
+                outval = -1;
+                break;
+            }
+        }
+    }
+    return outval;
+}
+
+
+#if 1
+/* no need for anything fancy, at 30000x16000 you wont notice. */
+void drawline(char *buffer, int n_buffer_samples /*no. samples in buffer*/,
+	      vertex_t p1, vertex_t p2) {
+  int i;
+  int16_t sample_x;
+  int16_t sample_y;
+
+  float x_diff = p2.x - p1.x;
+  float y_diff = p2.y - p1.y;
+  
+  for (i = 0; i < n_buffer_samples; i++) {
+    float m = (float)i / (float)n_buffer_samples;
+
+    sample_x = (int16_t)((p1.x + (x_diff * m)) * MAX_X);
+    sample_y = (int16_t)((p1.y + (y_diff * m)) * MAX_Y);
+
+    buffer[4*i]   = sample_x & 0xff;
+    buffer[4*i+3] = (sample_y >> 8) & 0xff;
+    buffer[4*i+2] = sample_y & 0xff;
+    buffer[4*i+1] = (sample_x >> 8) & 0xff;
+  }
+
+
+
+  return;
+}
+
+void draw_vertex_list(draw_buffer_t *db, ao_sample_format *format,
+		      vertex_t *vlist, connection_t *con, int nlines) {
+  int i;
+
+  char *p = db->buffer;
+  int samples_per_line = (db->samples_per_frame / nlines);
+  int bytes_per_sample = format->bits/8 * format->channels;
+  int bytes_per_line = samples_per_line * bytes_per_sample;
+
+  for (i =0; i < nlines; i++) {
+    drawline(p, samples_per_line, vlist[con[i].a], vlist[con[i].b]);
+    p += bytes_per_line;
+  }
+	
+ 
+  return;
+}
+
+
+#else
 
 void drawline(char *buffer, int n_buffer_samples /*no. samples in buffer*/,
 	      vertex_t p1, vertex_t p2) {
@@ -82,6 +199,7 @@ void draw_vertex_list(draw_buffer_t *db, ao_sample_format *format,
  
   return;
 }
+#endif
 
 
 void init_buffer(draw_buffer_t *draw_buffer, ao_sample_format *format) {
@@ -95,6 +213,53 @@ void init_buffer(draw_buffer_t *draw_buffer, ao_sample_format *format) {
 			       sizeof(char));
 
 
+}
+
+
+void project(vertex_3d_t *verts, vertex_t *projected, int nverts) {
+  int i;
+  float focus = 0.8;
+
+  for (i = 0; i < nverts; i++) {
+    projected[i].x = 0.6*(verts[i].x) / ((verts[i].z + 1.3) * focus);
+    projected[i].y = 0.6*(verts[i].y) / ((verts[i].z + 1.3) * focus);
+  }
+  
+  return;
+}
+
+void rotate(vertex_3d_t *model, vertex_3d_t *rotated, int nverts) {
+  int i = 0;
+  /* so sue me */
+  static float xr = 0;
+  static float yr = 0;
+  static float zr = 0;
+
+  xr += M_PI * 0.005;
+  yr += M_PI * 0.005;
+  zr += M_PI * 0.005;
+
+  for (i = 0; i < nverts; i++) {
+    float x1 = model[i].x;
+    float y1 = model[i].y;
+    float z1 = model[i].z;
+
+    float xx = x1;
+    float yy = y1*cosf(xr)+z1*sinf(xr);
+    float zz = z1*cosf(xr)-y1*sinf(xr);
+    y1 = yy;
+    x1=xx*cosf(yr)-zz*sinf(yr);
+    z1=xx*sinf(yr)+zz*cosf(yr);
+    zz=z1;
+    xx=x1*cosf(zr)-y1*sinf(zr);
+    yy=x1*sinf(zr)+y1*cosf(zr);
+
+    rotated[i].x = xx;
+    rotated[i].y = yy;
+    rotated[i].z = zz;
+  }
+
+  return;
 }
 
 void init_format(ao_sample_format *format) {
@@ -137,14 +302,37 @@ int main(int argc, char **argv)
 	int default_driver;
 	int16_t sample;
 	int16_t sample2;
-
+        char buf[64];
+        io_t io;
 	draw_buffer_t draw_buffer;
 
 	int i;
 
+        if (argc != 3) {
+            fprintf(stderr, "Syntax: pong [hid#-player1] [hid#-player2]\n");
+            return 1;
+        }
+
+        sprintf(buf, "/dev/hidraw%d", atoi( argv[1] ));
+        printf(" -- Player 1 is %s \n", buf);
+        io.fds[0] = open(buf, O_RDONLY | O_NDELAY);
+        if (io.fds[0] < 0) {
+            fprintf(stderr, "WARNING: Cannot open %s - %s [%d] \n",
+                    buf, strerror(errno), errno);
+            io.fds[0] = -1;
+        }
+        sprintf(buf, "/dev/hidraw%d", atoi(argv[2]));
+        printf(" -- Player 2 is %s \n", buf);
+        io.fds[1] = open(buf, O_RDONLY | O_NDELAY);
+        if (io.fds[1] < 0) {
+            fprintf(stderr, "WARNING: Cannot open %s - %s [%d] \n",
+                    buf, strerror(errno), errno);
+            io.fds[1] = -1;
+        }
+
 	/* -- Initialize -- */
 
-	fprintf(stderr, "libao example program\n");
+        printf("Start up ao.\n");
 
 	ao_initialize();
 
@@ -166,6 +354,73 @@ int main(int argc, char **argv)
 
 	init_buffer(&draw_buffer, &format);
 
+
+#define NVERTS 8
+	vertex_3d_t cube_verts[NVERTS] = {
+	  {-0.3,-0.3,-0.3},
+	  { 0.3,-0.3,-0.3},
+	  { 0.3, 0.3,-0.3},
+	  {-0.3, 0.3,-0.3},
+	  {-0.3,-0.3, 0.3},
+	  { 0.3,-0.3, 0.3},
+	  { 0.3, 0.3, 0.3},
+	  {-0.3, 0.3, 0.3},
+	};
+	vertex_3d_t rotated_cube_verts[NVERTS];
+
+
+	connection_t cube_lines[] = {
+	  {0,1},
+	  {1,2},
+	  {2,3},
+	  {3,0},
+
+	  {0,4},
+	  
+	  {4,5},
+	  {5,6},
+	  {6,7},
+	  {7,4},
+	  
+	  {4,5},
+	  {5,1},
+
+	  {1,2},
+	  {2,6},
+	  {6,7},
+	  {7,3},
+	  {3,0},
+	  
+
+	};
+
+	vertex_t projected_verts[NVERTS] = {
+	  {1,0},
+	  {0,0},
+	  {0,0},
+	  {0,0},
+	  {0,0},
+	  {0,0},
+	  {0,0},
+	  {0,0},
+
+	};
+
+	while(1) {
+	  memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
+
+	  rotate(cube_verts, rotated_cube_verts, NVERTS);	 
+	  project(rotated_cube_verts, projected_verts, NVERTS);
+
+	    
+	  draw_vertex_list(&draw_buffer, &format,
+			   projected_verts, cube_lines, sizeof(cube_lines) / sizeof(connection_t));
+	
+	  ao_play(device, draw_buffer.buffer, draw_buffer.buf_size);
+	}
+
+
+#if 0
 	// sorry!
 	float ball_sx = 0.0;
 	float ball_sy = 0.0;
@@ -186,6 +441,25 @@ int main(int argc, char **argv)
 	};
 
 	while(1) {
+            int rv;
+            struct pollfd fds[2];
+            fds[0].fd = io.fds[0];
+            fds[0].revents = 0;
+            fds[0].events = POLLIN;
+            fds[1].fd = io.fds[1];
+            fds[1].revents = 0;
+            fds[1].events = POLLIN;
+            rv = poll(fds, 2, 0 );
+            if (fds[0].revents) { 
+                poll_hid(io.fds[0]);
+            }
+
+            if (fds[1].revents) { 
+                poll_hid(io.fds[1]);
+            }
+                
+            
+
 	  memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
 
 	  ball_sx += ball_vx;
@@ -207,6 +481,7 @@ int main(int argc, char **argv)
 	
 	  ao_play(device, draw_buffer.buffer, draw_buffer.buf_size);
 	}
+#endif
 
 	/* -- Close and shutdown -- */
 	ao_close(device);
