@@ -17,8 +17,8 @@
 #define BUF_SIZE 4096
 
 /* How fast do things move? */
-#define VEL_Y (0.03)
-#define VEL_Z (0.01)
+#define VEL_Y (0.04)
+#define VEL_Z (0.02)
 
 typedef struct io_s {
     int fds[2];
@@ -65,6 +65,7 @@ static void dump(const uint8_t *b, int n) {
     }
     printf("\n");
 }
+
 
 
 static void init_ball(vertex_3d_t *ball_vec,
@@ -414,6 +415,15 @@ int update_ball(vertex_t *verts, float bx, float by, int start_i) {
   verts[start_i + 7].x = bx - BALL_W;
   verts[start_i + 7].y = by - BALL_H;
 }
+static void restore_bats( vertex_3d_t *bv0, vertex_3d_t *bv1,
+                          vertex_3d_t * bat_verts,
+                          int nr_bat_verts,
+                          vertex_3d_t * bat_shape) { 
+    memcpy(bv0, bat_verts,  nr_bat_verts * sizeof(vertex_3d_t));
+    memcpy(bv1,bat_verts, nr_bat_verts * sizeof(vertex_3d_t));
+    scale(bv0, bat_shape, nr_bat_verts);
+    scale(bv1,bat_shape, nr_bat_verts);
+}
 
 
 int main(int argc, char **argv)
@@ -453,6 +463,11 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Error opening device.\n");
 		return 1;
 	}
+
+        printf("Controls: \n");
+        printf(" 8 - bat up, 2 - bat down \n");
+        printf(" 4 - bat out, 6 - bat in \n");
+        
         sprintf(buf, "/dev/hidraw%d", atoi( argv[1] ));
         printf(" -- Player 1 is %s \n", buf);
         io.fds[0] = open(buf, O_RDONLY | O_NDELAY);
@@ -486,6 +501,9 @@ int main(int argc, char **argv)
 	};
 
         vertex_3d_t bat_size = { 0.1, 0.8, 0.5 };
+        vertex_3d_t bat_incr = { 0.95, 0.95, 0.95 };
+
+	vertex_3d_t my_bat_verts[2 * BAT_NVERTS];
 
 	vertex_3d_t ball_verts[BALL_NVERTS] = {
 	  {-0.3,-0.3,-0.3},
@@ -503,6 +521,7 @@ int main(int argc, char **argv)
         vertex_3d_t ball_v = { 0.0, 0.0, 0.0 };
         
         vertex_3d_t ball_size = { 0.2, 0.2, 0.2 };
+
 
 	connection_t ball_lines[] = {
 	  {0,1},
@@ -584,9 +603,7 @@ int main(int argc, char **argv)
         vertex_3d_t ball_max = {
             2.0, 1.2, 0.2
         };
-
-            
-        scale(bat_verts, &bat_size, BAT_NVERTS);
+        restore_bats(&my_bat_verts[0], &my_bat_verts[BAT_NVERTS], bat_verts, BAT_NVERTS, &bat_size);
         scale(ball_verts, &ball_size, BALL_NVERTS);
         
         init_ball(&ball_vec, &ball_v);
@@ -613,8 +630,8 @@ int main(int argc, char **argv)
                 
             }
 
-#define BALL_MAX_V_X (0.04)
-#define BALL_MIN_V_X (0.02)
+#define BALL_MAX_V_X (0.03)
+#define BALL_MIN_V_X (0.01)
 #define BALL_MAX_V_Y (0.04)
 #define BALL_MAX_V_Z (0.01)
             if (ball_v.x >= 0.0 && 
@@ -662,8 +679,10 @@ int main(int argc, char **argv)
             if (ball_vec.x < ball_min.x ||
                 ball_vec.x > ball_max.x ) {
                 /* Game over! New game! */
-                printf("New game!\n");
                 init_ball(&ball_vec, &ball_v);
+                restore_bats(&my_bat_verts[0],
+                             &my_bat_verts[BAT_NVERTS],
+                             bat_verts, BAT_NVERTS, &bat_size);
             }
 
 
@@ -683,8 +702,8 @@ int main(int argc, char **argv)
 
             memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
             
-            memcpy( translated_bat_verts[0], bat_verts, BAT_NVERTS * sizeof( vertex_3d_t ) );
-            memcpy( translated_bat_verts[1], bat_verts, BAT_NVERTS * sizeof( vertex_3d_t ) );
+            memcpy( translated_bat_verts[0], &my_bat_verts[0], BAT_NVERTS * sizeof( vertex_3d_t ) );
+            memcpy( translated_bat_verts[1], &my_bat_verts[BAT_NVERTS], BAT_NVERTS * sizeof( vertex_3d_t ) );
 
             translate( translated_bat_verts[0], &bat_pos[0], BAT_NVERTS );
             translate( translated_bat_verts[1], &bat_pos[1], BAT_NVERTS );
@@ -703,6 +722,9 @@ int main(int argc, char **argv)
                             /* Hit! */
                             was_inside[i] = 1;
                             reflect ( &ball_v, &bat_vel[i], translated_bat_verts[i], BAT_NVERTS );
+
+                            /* .. and make your bat slightly smaller */
+                            scale(&my_bat_verts[i*BAT_NVERTS], &bat_incr, BAT_NVERTS );
                         } 
                     } else {
                         was_inside[i] = 0;
