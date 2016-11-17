@@ -17,7 +17,7 @@
 #define BUF_SIZE 4096
 
 /* How fast do things move? */
-#define VEL_Y (0.01)
+#define VEL_Y (0.03)
 #define VEL_Z (0.01)
 
 typedef struct io_s {
@@ -97,7 +97,7 @@ static void init_ball(vertex_3d_t *ball_vec,
 #define BAT_Y_MAX (1.0)
 
 #define BAT_Z_MIN (-0.5)
-#define BAT_Z_MAX (0.3)
+#define BAT_Z_MAX (0.2)
 
 static void limit_bat( vertex_3d_t * pos ) {
     if (pos->y < BAT_Y_MIN) { pos->y = BAT_Y_MIN; }
@@ -131,24 +131,37 @@ static void update_velocity( int hid_result, vertex_3d_t * vel ) {
     } 
 }
 
-static void reflect( vertex_3d_t * ball_v, vertex_3d_t * batverts, int nr_batverts) { 
+
+static void reflect( vertex_3d_t * ball_v, vertex_3d_t *bat_v, vertex_3d_t * batverts, int nr_batverts) { 
     ball_v->x = -ball_v->x;
     ball_v->y = -ball_v->y;
     ball_v->z = -ball_v->z;
     
     double xx,yy,zz;
-    xx = (double)(random()%20)/1000.0;
-    yy = (double)(random()%20)/1000.0;
-    zz = (double)(random()%20)/1600.0;
+    xx = (double)(random()%20)/200.0;
+    yy = (double)(random()%20)/200.0;
+    zz = (double)(random()%20)/200.0;
 
-    if (ball_v->x < 0.0) { xx = -xx; }
-    if (ball_v->y < 0.0) { yy = -yy; }
-    if (ball_v->z < 0.0) { zz = -zz; }
+        /* add a bit of randomness */
+    ball_v->x = ball_v->x * (0.8 + xx);
+    ball_v->y = ball_v->y * (0.8 + yy);
+    ball_v->z = ball_v->z * (0.8 + zz);
 
-    /* add a bit of randomness */
+    xx = (double)(random()%20)/400.0;
+    yy = (double)(random()%20)/400.0;
+    zz = (double)(random()%20)/400.0;
+    if (ball_v->x < 0) { xx = -xx; }
+    if (ball_v->y < 0) { yy = -yy; }
+    if (ball_v->z < 0) { zz = -zz; }
+
     ball_v->x += xx;
     ball_v->y += yy;
     ball_v->z += zz;
+
+    ball_v->x += bat_v->x;
+    ball_v->y += bat_v->y;
+    ball_v->z += bat_v->z;
+
 }
 
 /* If any of the vertices of object1 are within the bounding box of object2, return 1;
@@ -566,10 +579,10 @@ int main(int argc, char **argv)
 
         /* If the ball leaves this box, we'll say it's gone out */
         vertex_3d_t ball_min = {
-            -3.0, -3.0, -0.8 
+            -2.0, -1.2, -0.2
         };
         vertex_3d_t ball_max = {
-            3.0, 3.0, 0.8
+            2.0, 1.2, 0.2
         };
 
             
@@ -599,7 +612,29 @@ int main(int argc, char **argv)
                 update_velocity( thing, &bat_vel[1] );
                 
             }
-                
+
+#define BALL_MAX_V_X (0.04)
+#define BALL_MIN_V_X (0.02)
+#define BALL_MAX_V_Y (0.04)
+#define BALL_MAX_V_Z (0.01)
+            if (ball_v.x >= 0.0 && 
+                ball_v.x < BALL_MIN_V_X) { 
+                ball_v.x = BALL_MIN_V_X;
+            }
+
+            if (ball_v.x < 0.0 && 
+                ball_v.x > -BALL_MIN_V_X) { 
+                ball_v.x = -BALL_MIN_V_X;
+            }
+
+            if (ball_v.x > BALL_MAX_V_X) { ball_v.x = BALL_MAX_V_X; }
+            if (ball_v.y > BALL_MAX_V_Y) { ball_v.y = BALL_MAX_V_Y; }
+            if (ball_v.z > BALL_MAX_V_Z) { ball_v.z = BALL_MAX_V_Z; }
+
+            if (ball_v.x < -BALL_MAX_V_X) { ball_v.x = -BALL_MAX_V_X; }
+            if (ball_v.y < -BALL_MAX_V_Y) { ball_v.y = -BALL_MAX_V_Y; }
+            if (ball_v.z < -BALL_MAX_V_Z) { ball_v.z = -BALL_MAX_V_Z; }
+
             /* Update the bats and balls, and make sure they remain in the playing area */
             ball_vec.x += ball_v.x;
             ball_vec.y += ball_v.y;
@@ -607,13 +642,25 @@ int main(int argc, char **argv)
 
             //            printf("Ball %g,%g,%g\n", ball_vec.x, ball_vec.y, ball_vec.z);
             
+            if (ball_vec.y < ball_min.y ||
+                ball_vec.y > ball_max.y) {
+                double xx;
+                xx = (random()%20)/200.0;
+                /* Reflect! */
+                ball_v.y = ball_v.y * (-1.0-xx);
+            }
+
+            if (ball_vec.z < ball_min.z ||
+                ball_vec.z > ball_max.z) {
+                double xx;
+                xx = (random()%20)/200.0;
+
+                /* Reflect! */
+                ball_v.z = ball_v.z * (-1.0-xx);;
+            }
+
             if (ball_vec.x < ball_min.x ||
-                ball_vec.x > ball_max.x ||
-                ball_vec.y < ball_min.y ||
-                ball_vec.y > ball_max.y ||
-                ball_vec.z < ball_min.z ||
-                ball_vec.z > ball_max.z ) {
-                
+                ball_vec.x > ball_max.x ) {
                 /* Game over! New game! */
                 printf("New game!\n");
                 init_ball(&ball_vec, &ball_v);
@@ -647,10 +694,18 @@ int main(int argc, char **argv)
             
             {
                 int i;
+                // Just latch inside, so we don't get stuck so often.
+                static int was_inside[2];
+
                 for (i =0;i < 2; ++i) { 
                     if (is_inside( rotated_ball_verts, BALL_NVERTS, translated_bat_verts[i], BAT_NVERTS)  ) {
-                        /* Hit! */
-                        reflect ( &ball_v, translated_bat_verts[i], BAT_NVERTS );
+                        if (!was_inside[i]) { 
+                            /* Hit! */
+                            was_inside[i] = 1;
+                            reflect ( &ball_v, &bat_vel[i], translated_bat_verts[i], BAT_NVERTS );
+                        } 
+                    } else {
+                        was_inside[i] = 0;
                     }
                 }
             }
