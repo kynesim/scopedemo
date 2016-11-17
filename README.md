@@ -20,6 +20,8 @@ your pi via USB. It takes two arguments - the numbers of `/dev/hidraw`
 devices to poll for the left and right player, respectively. The controls
 are:
 
+| Key | Meaning |
+| ---- |: --- :|
 | 8 | Move up |
 | 2 | Move down |
 | 4 | Move in |
