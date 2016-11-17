@@ -4,7 +4,7 @@ dirs:
 	mkdir -p bin/
 
 bin/pong: src/pong.c
-	gcc -o $@ $^ -lao -ldl -lm
+	gcc -o $@ $^  -g -lao -ldl -lm
 
 
 bin/cube: src/cube.c

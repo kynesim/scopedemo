@@ -11,6 +11,10 @@
 
 #define BUF_SIZE 4096
 
+/* How fast do things move? */
+#define VEL_Y (0.01)
+#define VEL_Z (0.01)
+
 typedef struct io_s {
     int fds[2];
 } io_t;
@@ -57,6 +61,29 @@ static void dump(const uint8_t *b, int n) {
     printf("\n");
 }
 
+
+static void update_velocity( int hid_result, vertex_3d_t * vel ) {
+    if (hid_result & (1<<4)) { 
+        /* Stop! */
+        vel->x = vel->y = vel->z = 0.0;
+    }
+    if (hid_result & (1<<0)) {
+        vel->y = VEL_Y;
+    } 
+
+    if (hid_result & (1<<1)) {
+        vel->y = -VEL_Y;
+    } 
+
+    if (hid_result & (1<<2)) {
+        vel->z = VEL_Z;
+    } 
+
+
+    if (hid_result & (1<<3)) {
+        vel->z = -VEL_Z;
+    } 
+}
 
 /** @return 0 for no event, OR 
  *   bit 0 -> move up
@@ -183,6 +210,21 @@ void project(vertex_3d_t *verts, vertex_t *projected, int nverts) {
   }
   
   return;
+}
+
+void vec3d_add(vertex_3d_t *result, vertex_3d_t *add) { 
+    result->x += add->x;
+    result->y += add->y;
+    result->z += add->z;
+}
+
+void scale(vertex_3d_t *model, vertex_3d_t *by, int nverts) { 
+    int i;
+    for (i =0;i < nverts; ++i) {
+        model[i].x = model[i].x * by->x;
+        model[i].y = model[i].y * by->y;
+        model[i].z = model[i].z * by->z;
+    }
 }
 
 void translate(vertex_3d_t *model, vertex_3d_t *by, int nverts) { 
@@ -320,8 +362,22 @@ int main(int argc, char **argv)
 
 	init_buffer(&draw_buffer, &format);
 
-#define NVERTS 8
-	vertex_3d_t ball_verts[NVERTS] = {
+#define BALL_NVERTS 8
+#define BAT_NVERTS 8
+	vertex_3d_t bat_verts[BAT_NVERTS] = {
+	  {-0.3,-0.8,-0.3},
+	  { 0.3,-0.8,-0.3},
+	  { 0.3, 0.8,-0.3},
+	  {-0.3, 0.8,-0.3},
+	  {-0.3,-0.8, 0.3},
+	  { 0.3,-0.8, 0.3},
+	  { 0.3, 0.8, 0.3},
+	  {-0.3, 0.8, 0.3},
+	};
+
+        vertex_3d_t bat_size = { 0.1, 0.8, 0.5 };
+
+	vertex_3d_t ball_verts[BALL_NVERTS] = {
 	  {-0.3,-0.3,-0.3},
 	  { 0.3,-0.3,-0.3},
 	  { 0.3, 0.3,-0.3},
@@ -331,10 +387,12 @@ int main(int argc, char **argv)
 	  { 0.3, 0.3, 0.3},
 	  {-0.3, 0.3, 0.3},
 	};
-	vertex_3d_t rotated_ball_verts[NVERTS];
+	vertex_3d_t rotated_ball_verts[BALL_NVERTS];
         /* Where is the ball? */
         vertex_3d_t ball_vec = { 0.0, 0.0, 0.0 };
-
+        vertex_3d_t ball_v = { 0.0, 0.0, 0.0 };
+        
+        vertex_3d_t ball_size = { 0.1, 0.1, 0.1 };
 
 	connection_t ball_lines[] = {
 	  {0,1},
@@ -360,7 +418,7 @@ int main(int argc, char **argv)
 
 	};
 
-	vertex_t projected_ball_verts[NVERTS] = {
+	vertex_t projected_ball_verts[BALL_NVERTS] = {
 	  {1,0},
 	  {0,0},
 	  {0,0},
@@ -372,7 +430,46 @@ int main(int argc, char **argv)
 
 	};
 
+        vertex_3d_t translated_bat_verts[2][BAT_NVERTS];
+
+	vertex_t projected_bat_verts[2][BAT_NVERTS] = {
+            { 
+                {1,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+            }, 
+
+            { 
+                {1,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+                {0,0},
+            }
+	};
+
+        vertex_3d_t bat_pos[2] = {
+            { -1.0, 0.0, 0.0 },
+            { 1.0, 0.0, 0.0 }
+        };
+            
+        scale(bat_verts, &bat_size, BAT_NVERTS);
+        scale(ball_verts, &ball_size, BALL_NVERTS);
         
+
+        /* Start of a game. Set the ball_v to something random */
+        srandom(time(NULL));
+        ball_v.x = (double)(random()%20)/150.0;
+        ball_v.y = (double)(random()%20)/150.0;
+        ball_v.z = (double)(random()%20)/150.0;
 
 	while(1) {
             int rv;
@@ -392,83 +489,58 @@ int main(int argc, char **argv)
                 poll_hid(io.fds[1]);
             }
                 
-            
+            /* Update the bats and balls, and make sure they remain in the playing area */
+            ball_vec.x += ball_v.x;
+            ball_vec.y += ball_v.y;
+            ball_vec.z += ball_v.z;
+
+
+
             memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
             
-            rotate(ball_verts, rotated_ball_verts, NVERTS);	 
-            translate( rotated_ball_verts, &ball_vec, NVERTS);
-            project(rotated_ball_verts, projected_ball_verts, NVERTS);
-	    
-	  draw_vertex_list(&draw_buffer, &format,
-			   projected_ball_verts, ball_lines, sizeof(ball_lines) / sizeof(connection_t));
+            memcpy( translated_bat_verts[0], bat_verts, BAT_NVERTS * sizeof( vertex_3d_t ) );
+            memcpy( translated_bat_verts[1], bat_verts, BAT_NVERTS * sizeof( vertex_3d_t ) );
+
+            translate( translated_bat_verts[0], &bat_pos[0], BAT_NVERTS );
+            translate( translated_bat_verts[1], &bat_pos[1], BAT_NVERTS );
+
+            rotate(ball_verts, rotated_ball_verts, BALL_NVERTS);	 
+            translate( rotated_ball_verts, &ball_vec, BALL_NVERTS);
+            project(rotated_ball_verts, projected_ball_verts, BALL_NVERTS);
+            project( translated_bat_verts[0], projected_bat_verts[0], BAT_NVERTS );
+            project( translated_bat_verts[1], projected_bat_verts[1], BAT_NVERTS );
+
+            /* Now combine our vertices and lines */
+            {
+                 int nr_ball_lines = sizeof(ball_lines) / sizeof(connection_t); 
+                 vertex_t display_list[ BALL_NVERTS + (2*BAT_NVERTS) ];
+                 connection_t display_lines[ nr_ball_lines + (2* nr_ball_lines) ];
+                 int i;
+
+                 memcpy(& display_list[0], projected_ball_verts, sizeof(vertex_t) *BALL_NVERTS );
+                 memcpy(& display_list[BALL_NVERTS], projected_bat_verts[0], sizeof(vertex_t) * BAT_NVERTS );
+                 memcpy(& display_list[BALL_NVERTS + BAT_NVERTS], projected_bat_verts[1], sizeof(vertex_t) * BAT_NVERTS );
+                 
+                 memcpy(& display_lines[0], ball_lines, nr_ball_lines * sizeof(connection_t) );
+                 memcpy(& display_lines[nr_ball_lines], ball_lines, nr_ball_lines * sizeof(connection_t));
+                 memcpy(& display_lines[2*nr_ball_lines], ball_lines, nr_ball_lines * sizeof(connection_t));
+                 for (i =0 ;i < nr_ball_lines; ++i) {
+                     display_lines[nr_ball_lines + i].a += BALL_NVERTS;
+                     display_lines[nr_ball_lines + i].b += BALL_NVERTS;
+                 }
+
+                 for (i =0 ;i < nr_ball_lines; ++i) {
+                     display_lines[2*nr_ball_lines + i].a += BALL_NVERTS + BAT_NVERTS;
+                     display_lines[2*nr_ball_lines + i].b += BALL_NVERTS + BAT_NVERTS;
+                 }
+
+                 draw_vertex_list(&draw_buffer, &format,
+                                  display_list, display_lines, 3* nr_ball_lines );
+            }
+
 	
 	  ao_play(device, draw_buffer.buffer, draw_buffer.buf_size);
 	}
-
-
-#if 0
-	// sorry!
-	float ball_sx = 0.0;
-	float ball_sy = 0.0;
-        float ball_vx = 0.01;
-	float ball_vy = 0.01;
-
-	//coordinates are between -1 and 1 on x and y, scaled later.
-	vertex_t verts[16] = {{-1,-1}, { 1,-1}, //field 
-			      { 1,-1}, { 1, 1},
-			      { 1, 1}, {-1, 1},
-			      {-1, 1}, {-1,-1},
-
-			      {-0.1,-0.1}, { 0.1,-0.1}, //ball
-			      { 0.1,-0.1}, { 0.1, 0.1},
-			      { 0.1, 0.1}, {-0.1, 0.1},
-			      {-0.1, 0.1}, {-0.1,-0.1},
-
-	};
-
-	while(1) {
-            int rv;
-            int p1 = 0, p2 = 0;
-            struct pollfd fds[2];
-            fds[0].fd = io.fds[0];
-            fds[0].revents = 0;
-            fds[0].events = POLLIN;
-            fds[1].fd = io.fds[1];
-            fds[1].revents = 0;
-            fds[1].events = POLLIN;
-            rv = poll(fds, 2, 0 );
-            if (fds[0].revents) { 
-                p1 = poll_hid(io.fds[0]);
-            }
-
-            if (fds[1].revents) { 
-                p2 = poll_hid(io.fds[1]);
-            }
-            
-            
-
-	  memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
-
-	  ball_sx += ball_vx;
-	  ball_sy += ball_vy;
-
-	  if (ball_sx > 1.0 || ball_sx < -1.0) {
-	    ball_vx *= -1.0;
-	  }
-
-	  if (ball_sy > 1.0 || ball_sy < -1.0) {
-	    ball_vy *= -1.0;
-	  }
-
-	  
-	  update_ball(verts, ball_sx, ball_sy, 8);
-	    
-	  draw_vertex_list(&draw_buffer, &format,
-			   verts, 8);
-	
-	  ao_play(device, draw_buffer.buffer, draw_buffer.buf_size);
-	}
-#endif
 
 	/* -- Close and shutdown -- */
 	ao_close(device);
