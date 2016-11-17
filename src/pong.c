@@ -57,7 +57,13 @@ static void dump(const uint8_t *b, int n) {
     printf("\n");
 }
 
-/** @return 0 for no event, -1 for down, +1 for up
+
+/** @return 0 for no event, OR 
+ *   bit 0 -> move up
+ *   bit 1 -> move down
+ *   bit 2 -> move in
+ *   bit 3 -> move out
+ *   bit 4 -> stop moving
  */
 static int poll_hid( int fd ) { 
     char buf[256];
@@ -76,15 +82,29 @@ static int poll_hid( int fd ) {
         }
     } else {
         if (rv >= 8) { 
+            dump( buf, rv );
             int key = buf[2];
             switch (key) { 
+            case 0x5c: 
+                /* 4 -> move in */
+                outval |= 4;
+                break;
+            case 0x5e:
+                outval |= 8;
+                break;
             case 0x60:
                 /* 8 -> move up */
-                outval = 1;
+                outval |= 1;
                 break;
             case 0x5a:
                 /* 2 -> move down */
-                outval = -1;
+                outval |= 2;
+                break;
+            case 0:
+                /* Do nothing */
+                break;
+            default:
+                outval |= 16;
                 break;
             }
         }
@@ -93,7 +113,6 @@ static int poll_hid( int fd ) {
 }
 
 
-#if 1
 /* no need for anything fancy, at 30000x16000 you wont notice. */
 void drawline(char *buffer, int n_buffer_samples /*no. samples in buffer*/,
 	      vertex_t p1, vertex_t p2) {
@@ -140,68 +159,6 @@ void draw_vertex_list(draw_buffer_t *db, ao_sample_format *format,
 }
 
 
-#else
-
-void drawline(char *buffer, int n_buffer_samples /*no. samples in buffer*/,
-	      vertex_t p1, vertex_t p2) {
-  int i;
-  int16_t sample_x;
-  int16_t sample_y;
-
-  float x_diff = p2.x - p1.x;
-  float y_diff = p2.y - p1.y;
-  
-  for (i = 0; i < n_buffer_samples; i++) {
-    float m = (float)i / (float)n_buffer_samples;
-
-    sample_x = (int16_t)((p1.x + (x_diff * m)) * MAX_X);
-    sample_y = (int16_t)((p1.y + (y_diff * m)) * MAX_Y);
-
-    buffer[4*i]   = sample_x & 0xff;
-    buffer[4*i+3] = (sample_y >> 8) & 0xff;
-    buffer[4*i+2] = sample_y & 0xff;
-    buffer[4*i+1] = (sample_x >> 8) & 0xff;
-  }
-
-
-
-  return;
-}
-
-/* this got much better in cube.c, you might want to use that, 
- * sorry for the copy paste, I was rushing ;)
- */
-void draw_vertex_list(draw_buffer_t *db, ao_sample_format *format,
-		      vertex_t *vlist, int nlines) {
-  int i;
-
-  /*
-  
-  vertex_t p1 = {-MAX_X,-MAX_Y};
-  vertex_t p2 = { MAX_X,-MAX_Y};
-  vertex_t p3 = { MAX_X, MAX_Y};
-  vertex_t p4 = {-MAX_X, MAX_Y};
-  */	
-
-	//drawline(buffer, samples_per_frame, p4, p1);
-
-
-  char *p = db->buffer;
-  int samples_per_line = (db->samples_per_frame / nlines);
-  int bytes_per_sample = format->bits/8 * format->channels;
-  int bytes_per_line = samples_per_line * bytes_per_sample;
-
-  for (i =0; i < nlines; i++) {
-    drawline(p, samples_per_line, vlist[2*i], vlist[(2*i) + 1]);
-    p += bytes_per_line;
-  }
-	
- 
-  return;
-}
-#endif
-
-
 void init_buffer(draw_buffer_t *draw_buffer, ao_sample_format *format) {
   /* -- Play some stuff -- */
 
@@ -226,6 +183,15 @@ void project(vertex_3d_t *verts, vertex_t *projected, int nverts) {
   }
   
   return;
+}
+
+void translate(vertex_3d_t *model, vertex_3d_t *by, int nverts) { 
+    int i;
+    for (i =0;i < nverts; ++i) {
+        model[i].x += by->x;
+        model[i].y += by->y;
+        model[i].z += by->z;
+    }
 }
 
 void rotate(vertex_3d_t *model, vertex_3d_t *rotated, int nverts) {
@@ -366,6 +332,8 @@ int main(int argc, char **argv)
 	  {-0.3, 0.3, 0.3},
 	};
 	vertex_3d_t rotated_ball_verts[NVERTS];
+        /* Where is the ball? */
+        vertex_3d_t ball_vec = { 0.0, 0.0, 0.0 };
 
 
 	connection_t ball_lines[] = {
@@ -404,6 +372,8 @@ int main(int argc, char **argv)
 
 	};
 
+        
+
 	while(1) {
             int rv;
             struct pollfd fds[2];
@@ -422,11 +392,12 @@ int main(int argc, char **argv)
                 poll_hid(io.fds[1]);
             }
                 
-
-	  memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
-
-	  rotate(ball_verts, rotated_ball_verts, NVERTS);	 
-	  project(rotated_ball_verts, projected_ball_verts, NVERTS);
+            
+            memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
+            
+            rotate(ball_verts, rotated_ball_verts, NVERTS);	 
+            translate( rotated_ball_verts, &ball_vec, NVERTS);
+            project(rotated_ball_verts, projected_ball_verts, NVERTS);
 	    
 	  draw_vertex_list(&draw_buffer, &format,
 			   projected_ball_verts, ball_lines, sizeof(ball_lines) / sizeof(connection_t));
@@ -457,6 +428,7 @@ int main(int argc, char **argv)
 
 	while(1) {
             int rv;
+            int p1 = 0, p2 = 0;
             struct pollfd fds[2];
             fds[0].fd = io.fds[0];
             fds[0].revents = 0;
@@ -466,13 +438,13 @@ int main(int argc, char **argv)
             fds[1].events = POLLIN;
             rv = poll(fds, 2, 0 );
             if (fds[0].revents) { 
-                poll_hid(io.fds[0]);
+                p1 = poll_hid(io.fds[0]);
             }
 
             if (fds[1].revents) { 
-                poll_hid(io.fds[1]);
+                p2 = poll_hid(io.fds[1]);
             }
-                
+            
             
 
 	  memset(draw_buffer.buffer, 0, draw_buffer.buf_size);
