@@ -8,6 +8,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/poll.h>
+#include <float.h>
+#include <limits.h>
+
+#define FLOAT_MIN (-999.0)
+#define FLOAT_MAX (999.0)
 
 #define BUF_SIZE 4096
 
@@ -62,6 +67,47 @@ static void dump(const uint8_t *b, int n) {
 }
 
 
+static void init_ball(vertex_3d_t *ball_vec,
+                      vertex_3d_t *ball_v) { 
+    memset(ball_vec, '\0', sizeof(vertex_3d_t));
+
+    /* Start of a game. Set the ball_v to something random */
+    srandom(time(NULL));
+    int x,y,z;
+    x = (random()%20)-10;
+    y = (random()%20)-10;
+    z = (random()%20)-10;
+    
+    ball_v->x = (double)x/500.0;
+    ball_v->y = (double)y/500.0;
+    ball_v->z = (double)z/800.0;
+
+    if (ball_v->x >= 0.0) { 
+        if ( ball_v->x < 0.02) { 
+            ball_v->x = 0.02;
+        }
+    } else {
+        if (ball_v->x > -0.02) { 
+            ball_v->x = -0.02;
+        }
+    }
+}
+
+#define BAT_Y_MIN (-1.0)
+#define BAT_Y_MAX (1.0)
+
+#define BAT_Z_MIN (-0.5)
+#define BAT_Z_MAX (0.3)
+
+static void limit_bat( vertex_3d_t * pos ) {
+    if (pos->y < BAT_Y_MIN) { pos->y = BAT_Y_MIN; }
+    if (pos->z < BAT_Z_MIN) { pos->z = BAT_Z_MIN; }
+
+    if (pos->y > BAT_Y_MAX) { pos->y = BAT_Y_MAX; }
+    if (pos->z > BAT_Z_MAX) { pos->z = BAT_Z_MAX; }
+}
+
+
 static void update_velocity( int hid_result, vertex_3d_t * vel ) {
     if (hid_result & (1<<4)) { 
         /* Stop! */
@@ -83,6 +129,58 @@ static void update_velocity( int hid_result, vertex_3d_t * vel ) {
     if (hid_result & (1<<3)) {
         vel->z = -VEL_Z;
     } 
+}
+
+static void reflect( vertex_3d_t * ball_v, vertex_3d_t * batverts, int nr_batverts) { 
+    ball_v->x = -ball_v->x;
+    ball_v->y = -ball_v->y;
+    ball_v->z = -ball_v->z;
+    
+    double xx,yy,zz;
+    xx = (double)(random()%20)/1000.0;
+    yy = (double)(random()%20)/1000.0;
+    zz = (double)(random()%20)/1600.0;
+
+    if (ball_v->x < 0.0) { xx = -xx; }
+    if (ball_v->y < 0.0) { yy = -yy; }
+    if (ball_v->z < 0.0) { zz = -zz; }
+
+    /* add a bit of randomness */
+    ball_v->x += xx;
+    ball_v->y += yy;
+    ball_v->z += zz;
+}
+
+/* If any of the vertices of object1 are within the bounding box of object2, return 1;
+ *  only works because bats are rectangular 
+ */
+static int is_inside( vertex_3d_t * object1,  int nr_1, vertex_3d_t * object2 , int nr2 ) {
+    float mins[3] = { FLOAT_MAX, FLOAT_MAX, FLOAT_MAX };
+    float maxs[3] = { FLOAT_MIN, FLOAT_MIN, FLOAT_MIN };
+    int i;
+
+
+
+    for (i =0;i< nr2;++i) {
+        if (object2[i].x < mins[0]) { mins[0] = object2[i].x; }
+        if (object2[i].y < mins[1]) { mins[1] = object2[i].y; } 
+        if (object2[i].z < mins[2]) { mins[2] = object2[i].z; }   
+        
+        if (object2[i].x > maxs[0]) { maxs[0] = object2[i].x; }
+        if (object2[i].y > maxs[1]) { maxs[1] = object2[i].y; }
+        if (object2[i].z > maxs[2]) { maxs[2] = object2[i].z; }
+    }
+    for (i =0 ; i <nr_1; ++i) {
+        if (object1[i].x > mins[0] &&
+            object1[i].x < maxs[0] &&
+            object1[i].y > mins[1] && 
+            object1[i].y < maxs[1] && 
+            object1[i].z > mins[2] && 
+            object1[i].z < maxs[2]) { 
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /** @return 0 for no event, OR 
@@ -109,7 +207,7 @@ static int poll_hid( int fd ) {
         }
     } else {
         if (rv >= 8) { 
-            dump( buf, rv );
+            //dump( buf, rv );
             int key = buf[2];
             switch (key) { 
             case 0x5c: 
@@ -270,6 +368,8 @@ void rotate(vertex_3d_t *model, vertex_3d_t *rotated, int nverts) {
   return;
 }
 
+
+
 void init_format(ao_sample_format *format) {
   memset(format, 0, sizeof(format));
   format->bits = 16;
@@ -321,22 +421,6 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        sprintf(buf, "/dev/hidraw%d", atoi( argv[1] ));
-        printf(" -- Player 1 is %s \n", buf);
-        io.fds[0] = open(buf, O_RDONLY | O_NDELAY);
-        if (io.fds[0] < 0) {
-            fprintf(stderr, "WARNING: Cannot open %s - %s [%d] \n",
-                    buf, strerror(errno), errno);
-            io.fds[0] = -1;
-        }
-        sprintf(buf, "/dev/hidraw%d", atoi(argv[2]));
-        printf(" -- Player 2 is %s \n", buf);
-        io.fds[1] = open(buf, O_RDONLY | O_NDELAY);
-        if (io.fds[1] < 0) {
-            fprintf(stderr, "WARNING: Cannot open %s - %s [%d] \n",
-                    buf, strerror(errno), errno);
-            io.fds[1] = -1;
-        }
 
 	/* -- Initialize -- */
 
@@ -356,9 +440,22 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Error opening device.\n");
 		return 1;
 	}
-
-
-
+        sprintf(buf, "/dev/hidraw%d", atoi( argv[1] ));
+        printf(" -- Player 1 is %s \n", buf);
+        io.fds[0] = open(buf, O_RDONLY | O_NDELAY);
+        if (io.fds[0] < 0) {
+            fprintf(stderr, "WARNING: Cannot open %s - %s [%d] \n",
+                    buf, strerror(errno), errno);
+            io.fds[0] = -1;
+        }
+        sprintf(buf, "/dev/hidraw%d", atoi(argv[2]));
+        printf(" -- Player 2 is %s \n", buf);
+        io.fds[1] = open(buf, O_RDONLY | O_NDELAY);
+        if (io.fds[1] < 0) {
+            fprintf(stderr, "WARNING: Cannot open %s - %s [%d] \n",
+                    buf, strerror(errno), errno);
+            io.fds[1] = -1;
+        }
 
 	init_buffer(&draw_buffer, &format);
 
@@ -392,7 +489,7 @@ int main(int argc, char **argv)
         vertex_3d_t ball_vec = { 0.0, 0.0, 0.0 };
         vertex_3d_t ball_v = { 0.0, 0.0, 0.0 };
         
-        vertex_3d_t ball_size = { 0.1, 0.1, 0.1 };
+        vertex_3d_t ball_size = { 0.2, 0.2, 0.2 };
 
 	connection_t ball_lines[] = {
 	  {0,1},
@@ -460,20 +557,31 @@ int main(int argc, char **argv)
             { -1.0, 0.0, 0.0 },
             { 1.0, 0.0, 0.0 }
         };
+
+
+        vertex_3d_t bat_vel[2] = {
+            { 0.0, 0.0, 0.0 },
+            { 0.0, 0.0, 0.0 }
+        };
+
+        /* If the ball leaves this box, we'll say it's gone out */
+        vertex_3d_t ball_min = {
+            -3.0, -3.0, -0.8 
+        };
+        vertex_3d_t ball_max = {
+            3.0, 3.0, 0.8
+        };
+
             
         scale(bat_verts, &bat_size, BAT_NVERTS);
         scale(ball_verts, &ball_size, BALL_NVERTS);
         
-
-        /* Start of a game. Set the ball_v to something random */
-        srandom(time(NULL));
-        ball_v.x = (double)(random()%20)/150.0;
-        ball_v.y = (double)(random()%20)/150.0;
-        ball_v.z = (double)(random()%20)/150.0;
+        init_ball(&ball_vec, &ball_v);
 
 	while(1) {
             int rv;
             struct pollfd fds[2];
+            int thing;
             fds[0].fd = io.fds[0];
             fds[0].revents = 0;
             fds[0].events = POLLIN;
@@ -482,17 +590,47 @@ int main(int argc, char **argv)
             fds[1].events = POLLIN;
             rv = poll(fds, 2, 0 );
             if (fds[0].revents) { 
-                poll_hid(io.fds[0]);
+                thing = poll_hid(io.fds[0]);
+                update_velocity( thing, &bat_vel[0] );
             }
 
             if (fds[1].revents) { 
-                poll_hid(io.fds[1]);
+                thing = poll_hid(io.fds[1]);
+                update_velocity( thing, &bat_vel[1] );
+                
             }
                 
             /* Update the bats and balls, and make sure they remain in the playing area */
             ball_vec.x += ball_v.x;
             ball_vec.y += ball_v.y;
             ball_vec.z += ball_v.z;
+
+            //            printf("Ball %g,%g,%g\n", ball_vec.x, ball_vec.y, ball_vec.z);
+            
+            if (ball_vec.x < ball_min.x ||
+                ball_vec.x > ball_max.x ||
+                ball_vec.y < ball_min.y ||
+                ball_vec.y > ball_max.y ||
+                ball_vec.z < ball_min.z ||
+                ball_vec.z > ball_max.z ) {
+                
+                /* Game over! New game! */
+                printf("New game!\n");
+                init_ball(&ball_vec, &ball_v);
+            }
+
+
+            bat_pos[0].x += bat_vel[0].x;
+            bat_pos[0].y += bat_vel[0].y;
+            bat_pos[0].z += bat_vel[0].z;
+            limit_bat ( & bat_pos[0] );
+
+
+            bat_pos[1].x += bat_vel[1].x;
+            bat_pos[1].y += bat_vel[1].y;
+            bat_pos[1].z += bat_vel[1].z;
+            limit_bat( &bat_pos[1] );
+
 
 
 
@@ -506,6 +644,17 @@ int main(int argc, char **argv)
 
             rotate(ball_verts, rotated_ball_verts, BALL_NVERTS);	 
             translate( rotated_ball_verts, &ball_vec, BALL_NVERTS);
+            
+            {
+                int i;
+                for (i =0;i < 2; ++i) { 
+                    if (is_inside( rotated_ball_verts, BALL_NVERTS, translated_bat_verts[i], BAT_NVERTS)  ) {
+                        /* Hit! */
+                        reflect ( &ball_v, translated_bat_verts[i], BAT_NVERTS );
+                    }
+                }
+            }
+
             project(rotated_ball_verts, projected_ball_verts, BALL_NVERTS);
             project( translated_bat_verts[0], projected_bat_verts[0], BAT_NVERTS );
             project( translated_bat_verts[1], projected_bat_verts[1], BAT_NVERTS );
