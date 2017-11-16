@@ -326,7 +326,7 @@ void rotate(model_vertex_3d_t *model, model_vertex_3d_t *rotated, int nverts) {
 
 
 
-void rotate2(model_t *model, invader_t *invader, model_vertex_3d_t *rotated) {
+void rotate2(model_t *model, invader_t *invader, model_vertex_3d_t *rotated, float xxx) {
 #if 1
   
   
@@ -334,9 +334,6 @@ void rotate2(model_t *model, invader_t *invader, model_vertex_3d_t *rotated) {
   static float xr = 0;
   static float yr = 0;
   static float zr = 0;
-  static float xxx = 0;
-
-  xxx += M_PI * 0.015;
 
   zr = M_PI +  (M_PI / 2);
   yr = sinf(xxx) * (M_PI / 12);
@@ -702,6 +699,8 @@ int main(int argc, char **argv)
 	  int used = 0;
 	  int n_output_verts = 0;
 
+	  
+
 
 	  {
 	    int rv;
@@ -732,6 +731,9 @@ int main(int argc, char **argv)
 	  invaders_block_animate();
 #if 1
 	  int invaders_alive = 0;
+	  static float xxx = 0;
+	  xxx += M_PI * 0.1;
+	  
 	  for (int i = 0; i < N_INVADERS; i++) {
 	    if (invaders[i].state) {
 
@@ -749,7 +751,7 @@ int main(int argc, char **argv)
 	      model_vertex_3d_t rotated_cube_verts[invader_model->n_verts];
 	      model_vertex_t projected_verts[invader_model->n_verts];
 	      memset(projected_verts, 0, invader_model->n_verts * sizeof(model_vertex_t));
-	      rotate2(invader_model, &(invaders[i]), rotated_cube_verts);
+	      rotate2(invader_model, &(invaders[i]), rotated_cube_verts, xxx);
 	      project(rotated_cube_verts, projected_verts, invader_model->n_verts);
 	      
 	      
